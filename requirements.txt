@@ -3,3 +3,4 @@ pandas
 numpy
 mediapipe
 opencv-python
+cv2
