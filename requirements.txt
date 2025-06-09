@@ -1,6 +1,7 @@
 streamlit
-pandas
-numpy
-mediapipe
 opencv-python
-cv2
+numpy
+Pillow
+mediapipe
+python-dotenv
+tensorflow
