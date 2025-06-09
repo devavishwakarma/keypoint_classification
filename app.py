@@ -1,543 +1,347 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+import streamlit as st
+import cv2
+import numpy as np
+from PIL import Image
+import os
+import smtplib
+from email.message import EmailMessage
+import mediapipe as mp
 import csv
 import copy
-import argparse
 import itertools
-from collections import Counter
-from collections import deque
+from dotenv import load_dotenv
+import os
+import tensorflow as tf
+from db import create_user_table, add_user, authenticate_user
 
-import cv2 as cv
-import numpy as np
-import mediapipe as mp
+# Initialize DB
+create_user_table()
 
-from utils import CvFpsCalc
-from model import KeyPointClassifier
-from model import PointHistoryClassifier
+# Import custom modules
+from model.keypoint_classifier.keypoint_classifier import KeyPointClassifier
+from model.point_history_classifier.point_history_classifier import PointHistoryClassifier
+from model.utils import calc_bounding_rect, calc_landmark_list, pre_process_landmark, pre_process_point_history
+
+# Email settings
+load_dotenv()
+
+def send_email(subject, body, to="EMAIL_ADDRESS"):
+    sender = os.getenv("EMAIL_ADDRESS")
+    password = os.getenv("EMAIL_PASSWORD")
+
+    msg = EmailMessage()
+    msg.set_content(body)
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(sender, password)
+        server.send_message(msg)
+
+# Dummy user database
+if "users" not in st.session_state:
+    st.session_state.users = {"admin": "admin123"}
+
+# Page configs
+st.set_page_config(page_title="Hand Gesture Recognition", layout="wide")
+
+# Authentication system
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+# Sidebar navigation
+pages = ["Home", "About Us", "User Manual", "Recognition Model", "Contact Us"]
+selected_page = st.sidebar.selectbox("Navigation", pages)
+
+# User account icon and username display
+if st.session_state.logged_in:
+    username = st.session_state.username
+    st.sidebar.markdown(f"### Welcome, {username}")
+    st.sidebar.image("https://www.gravatar.com/avatar/00000000000000000000000000000000?s=200&d=mp", width=50)  # Placeholder icon
+
+# Logout button if logged in
+if st.session_state.logged_in:
+    if st.sidebar.button("Logout"):
+        st.session_state.logged_in = False
+        st.sidebar.success("Logged out successfully.")
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
+# --- Pages ---
 
-    parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--width", help='cap width', type=int, default=960)
-    parser.add_argument("--height", help='cap height', type=int, default=540)
+if selected_page == "Home":
+    st.title("Welcome to the Hand Gesture Recognition System")
+    st.markdown("<h3 style='text-align: center;'>Explore the World of Hand Signs</h3>", unsafe_allow_html=True)
 
-    parser.add_argument('--use_static_image_mode', action='store_true')
-    parser.add_argument("--min_detection_confidence",
-                        help='min_detection_confidence',
-                        type=float,
-                        default=0.7)
-    parser.add_argument("--min_tracking_confidence",
-                        help='min_tracking_confidence',
-                        type=int,
-                        default=0.5)
+    # Row 1: Hello Gesture
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.image("images/image_1.jpeg", use_container_width=True)
+    with col2:
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <p>Hand sign language is a visual form of communication that uses hand gestures, body movements, and facial expressions to convey words and meanings. It is primarily used by deaf and hard-of-hearing individuals as an alternative to spoken language. Each gesture or combination of gestures represents specific letters, words, or concepts.</p>
+                <p>There are various types of sign languages used across the world, such as American Sign Language (ASL), British Sign Language (BSL), and Indian Sign Language (ISL), each with its own grammar and vocabulary. Hand sign language is not universal—different regions have developed their own versions based on culture and linguistic needs.</p>
+                <p>With the advancement of technology, hand sign language recognition systems are being developed using computer vision and machine learning to help bridge the communication gap between hearing and non-hearing individuals. These systems translate signs into text or speech, enabling more inclusive communication.</p>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-    args = parser.parse_args()
+    st.markdown("---")
 
-    return args
+    # Row 2: Thank You Gesture (Image on Right)
+    col3, col4 = st.columns([2, 1])  # Swapped the width ratio
+    with col3:
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <p>Hand sign languages are crucial for enabling effective communication within the deaf and hard-of-hearing community. For many individuals, these languages serve as the primary means of expression, offering a way to convey thoughts, emotions, and ideas. Without sign language, many deaf people would face significant barriers to communication, limiting their independence and ability to fully participate in society. Sign language empowers individuals by providing a natural form of communication that does not rely on spoken words or hearing, ensuring that they can engage in conversations and share experiences in their daily lives.</p>
+                <p>Real-time recognition systems, powered by machine learning and computer vision, are breaking down barriers by enabling communication between deaf and hearing people without the need for interpreters. These innovations in assistive technology make it easier for deaf individuals to navigate the world, enhancing their ability to participate in education, work, and social activities. As technology continues to develop, the accessibility and integration of sign language will only improve, leading to greater equity and inclusion for the deaf community.</p>
+            </div>
+            """, unsafe_allow_html=True
+        )
+    with col4:
+        st.image("images/image_2.jpeg", use_container_width=True)
 
+    st.markdown("---")
 
-def main():
-    # Argument parsing #################################################################
-    args = get_args()
+    # Row 3: Help Gesture
+    col5, col6 = st.columns([1, 2])
+    with col5:
+        st.image("images/image_3.jpeg", use_container_width=True)
+    with col6:
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <p>Hand sign language is used in various real-life scenarios, greatly enhancing communication for the deaf and hard-of-hearing individuals. In education, sign language is often taught in schools specifically designed for the deaf, providing a rich learning environment. Deaf students use sign language to interact with their peers and teachers, facilitating better understanding and participation in class. Additionally, many mainstream schools are integrating sign language programs to promote inclusivity, ensuring that deaf students have equal access to education.</p>
+                <p>Furthermore, hand sign language is becoming increasingly integrated into technology to support communication in real-time. Mobile apps and smart devices are being developed to recognize and translate sign language gestures, enabling seamless communication between deaf and hearing people. For example, applications like SignAll and MotionSavvy are using computer vision and machine learning to translate hand gestures into text or speech, offering new ways for deaf individuals to interact with people who don’t know sign language, thereby enhancing inclusivity in public spaces, healthcare, and everyday social interactions.</p>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-    cap_device = args.device
-    cap_width = args.width
-    cap_height = args.height
+elif selected_page == "About Us":
+    st.markdown("<h1 style='text-align: center;'>About Us</h1>", unsafe_allow_html=True)
 
-    use_static_image_mode = args.use_static_image_mode
-    min_detection_confidence = args.min_detection_confidence
-    min_tracking_confidence = args.min_tracking_confidence
-
-    use_brect = True
-
-    # Camera preparation ###############################################################
-    cap = cv.VideoCapture(cap_device)
-    cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
-    cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
-
-    # Model load #############################################################
-    mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(
-        static_image_mode=use_static_image_mode,
-        max_num_hands=1,
-        min_detection_confidence=min_detection_confidence,
-        min_tracking_confidence=min_tracking_confidence,
+    # Paragraph about teamwork and dedication
+    st.markdown(
+        """
+        <div style="text-align: center;">
+            <p>Our team is driven by a shared vision of bridging the communication gap between deaf and hearing communities. We are committed to ensuring that individuals with hearing impairments have equal access to communication and information. Our diverse group of passionate individuals brings unique skills and perspectives to the table, including expertise in machine learning, computer vision, software development, and user experience design. Together, we are dedicated to developing innovative solutions that empower the deaf and hard-of-hearing community.</p>
+            <p>Our goal is to create technologies that foster inclusivity and create a world where everyone can communicate effortlessly, regardless of their hearing abilities. We believe in the power of collaboration and continuous learning, which drives us to push the boundaries of what can be achieved with gesture recognition and artificial intelligence.</p>
+        </div>
+        """, unsafe_allow_html=True
     )
 
-    keypoint_classifier = KeyPointClassifier()
+    st.markdown("---")
 
-    point_history_classifier = PointHistoryClassifier()
+    
+    # Team members images with names and roles
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.image("images/team_member_1.jpeg", use_container_width=True)
+        st.markdown("<p style='text-align: center;'>Atharva Dagade</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>Project Lead</p>", unsafe_allow_html=True)
+        
+    with col2:
+        st.image("images/team_member_2.jpeg", use_container_width=True)
+        st.markdown("<p style='text-align: center;'>Siddharth Patwardhan</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>UI Creator</p>", unsafe_allow_html=True)
+        
+    with col3:
+        st.image("images/team_member_3.jpeg", use_container_width=True)
+        st.markdown("<p style='text-align: center;'>Deva Vishwakarma</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>Data and Documentation Manager</p>", unsafe_allow_html=True)
+        
+    with col4:
+        st.image("images/team_member_4.png", use_container_width=True)
+        st.markdown("<p style='text-align: center;'>Dr. V. S. Inamdar</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center;'>Project Guide</p>", unsafe_allow_html=True)
 
-    # Read labels ###########################################################
-    with open('model/keypoint_classifier/keypoint_classifier_label.csv',
-              encoding='utf-8-sig') as f:
-        keypoint_classifier_labels = csv.reader(f)
-        keypoint_classifier_labels = [
-            row[0] for row in keypoint_classifier_labels
-        ]
-    with open(
-            'model/point_history_classifier/point_history_classifier_label.csv',
-            encoding='utf-8-sig') as f:
-        point_history_classifier_labels = csv.reader(f)
-        point_history_classifier_labels = [
-            row[0] for row in point_history_classifier_labels
-        ]
+    st.markdown("---")
 
-    # FPS Measurement ########################################################
-    cvFpsCalc = CvFpsCalc(buffer_len=10)
+    # Paragraph about the project
+    st.markdown(
+        """
+        <div style="text-align: center;">
+            <p>Our current project is focused on building a real-time hand gesture recognition system. Using cutting-edge machine learning techniques and computer vision, we have developed a system that can recognize various hand gestures in real-time through a webcam. The system is designed to bridge the communication gap between deaf and hearing individuals, enabling seamless interaction without the need for traditional sign language interpreters. We have made significant progress in creating a user-friendly interface that supports communication through gestures, and we are constantly refining the system to improve its accuracy and accessibility.</p>
+            <p>Our project is not just about technology; it’s about making a difference in the lives of individuals who face challenges due to hearing impairments. We are excited to continue working towards a future where communication is universally accessible and inclusive.</p>
+        </div>
+        """, unsafe_allow_html=True
+    )
 
-    # Coordinate history #################################################################
-    history_length = 16
-    point_history = deque(maxlen=history_length)
+elif selected_page == "User Manual":
+    st.markdown("<h1 style='text-align: center;'>User Manual</h1>", unsafe_allow_html=True)
+    st.markdown("------")
+    st.markdown("""
+    <div style='text-align: center; font-size: 18px;'>
+        <p><strong>1. Explore gestures</strong> by scrolling through the grid of hand sign images and their names.</p>
+        <p><strong>2. Identify each gesture</strong> by reading the name below the corresponding image.</p>
+        <p><strong>3. Navigate the grid</strong> to easily browse through all available hand signs and their meanings.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Finger gesture history ################################################
-    finger_gesture_history = deque(maxlen=history_length)
+    st.markdown("------")
 
-    #  ########################################################################
-    mode = 0
+    image_folder = "sign_images"  # make sure this folder contains 55 images
+    gesture_names = [
+       "Down", "Eat", "Fast", "Father", "Favourite", "Friend", "Go", "Hate", "Hello", "How",
+    "Hurt", "I_agree", "Is", "Learn", "Love", "Like", "Me", "Name", "No", "Nothing",
+    "Ok", "Prosper", "Photo", "Please", "Question", "Ready", "Rock", "Run", "Shocker",
+    "Sit_down", "Slow", "Stand_up", "Stop", "Teacher", "That", "This", "Together", "Up",
+    "Wash", "Whats_Up", "Win", "You", "Again", "Baby", "Bird", "Busy", "Call", "Claw",
+    "Come", "Dont_like"
+    ]  # Replace with actual names if needed
 
-    while True:
-        fps = cvFpsCalc.get()
+    for row in range(11):
+        cols = st.columns(5)
+        for col_idx in range(5):
+            sign_index = row * 5 + col_idx
+            if sign_index < len(gesture_names):
+                img_path = os.path.join(image_folder, f"sign_{sign_index+1}.png")
+                try:
+                    cols[col_idx].image(img_path, use_container_width=True)
+                    cols[col_idx].markdown(f"<center>{gesture_names[sign_index]}</center>", unsafe_allow_html=True)
+                except:
+                    cols[col_idx].warning("Image not found.")
+            
+            # Add vertical separator lines after each column (except the last one)
+            if col_idx < 4:
+                cols[col_idx].markdown("<div style='border-right: 1px solid #ccc; height: 100%;'></div>", unsafe_allow_html=True)
 
-        # Process Key (ESC: end) #################################################
-        key = cv.waitKey(10)
-        if key == 27:  # ESC
-            break
-        number, mode = select_mode(key, mode)
+        # Add a horizontal rule after every row
+        st.markdown("----")
 
-        # Camera capture #####################################################
-        ret, image = cap.read()
-        if not ret:
-            break
-        image = cv.flip(image, 1)  # Mirror display
-        debug_image = copy.deepcopy(image)
 
-        # Detection implementation #############################################################
-        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
-        image.flags.writeable = False
-        results = hands.process(image)
-        image.flags.writeable = True
+elif selected_page == "Recognition Model":
+    st.markdown("<h1 style='text-align: center;'>Real-Time Gesture Recognition</h1>", unsafe_allow_html=True)
+    
+#     @st.cache_data
+#     def load_csv_from_drive(drive_url):
+#         import pandas as pd
+#         return pd.read_csv(drive_url, header=None).iloc[:, 0].tolist()
 
-        #  ####################################################################
-        if results.multi_hand_landmarks is not None:
-            for hand_landmarks, handedness in zip(results.multi_hand_landmarks,
-                                                  results.multi_handedness):
-                # Bounding box calculation
-                brect = calc_bounding_rect(debug_image, hand_landmarks)
-                # Landmark calculation
-                landmark_list = calc_landmark_list(debug_image, hand_landmarks)
+# # Google Drive direct download link (you shared this)
+#     csv_url = "https://drive.google.com/uc?export=download&id=1OQ5Tsn7m7YwyOyosqo_afZkJ8H_AqucU"
+#     keypoint_classifier_labels = load_csv_from_drive(csv_url)
 
-                # Conversion to relative coordinates / normalized coordinates
-                pre_processed_landmark_list = pre_process_landmark(
-                    landmark_list)
-                pre_processed_point_history_list = pre_process_point_history(
-                    debug_image, point_history)
-                # Write to the dataset file
-                logging_csv(number, mode, pre_processed_landmark_list,
-                            pre_processed_point_history_list)
+    
+    if not st.session_state.logged_in:
+        st.warning("Please log in to access the recognition model.")
+    else:
+        st.subheader("Choose Gesture Type")
+        model_type = st.radio("Model Type", ["Static Gestures", "Dynamic Gestures"])
 
-                # Hand sign classification
-                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-                if hand_sign_id == 2:  # Point gesture
-                    point_history.append(landmark_list[8])
-                else:
-                    point_history.append([0, 0])
+        start = st.button("Start Recognition")
 
-                # Finger gesture classification
-                finger_gesture_id = 0
-                point_history_len = len(pre_processed_point_history_list)
-                if point_history_len == (history_length * 2):
-                    finger_gesture_id = point_history_classifier(
-                        pre_processed_point_history_list)
+        if start:
+            mp_hands = mp.solutions.hands
+            hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
+            mp_draw = mp.solutions.drawing_utils
 
-                # Calculates the gesture IDs in the latest detection
-                finger_gesture_history.append(finger_gesture_id)
-                most_common_fg_id = Counter(
-                    finger_gesture_history).most_common()
+            keypoint_classifier = KeyPointClassifier()
+            point_history_classifier = PointHistoryClassifier()
 
-                # Drawing part
-                debug_image = draw_bounding_rect(use_brect, debug_image, brect)
-                debug_image = draw_landmarks(debug_image, landmark_list)
-                debug_image = draw_info_text(
-                    debug_image,
-                    brect,
-                    handedness,
-                    keypoint_classifier_labels[hand_sign_id],
-                    point_history_classifier_labels[most_common_fg_id[0][0]],
-                )
+            cap = cv2.VideoCapture(0)
+            stframe = st.empty()
+            stop = st.button("Stop Recognition")
+
+            point_history = []
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    st.error("Failed to read from webcam.")
+                    break
+
+                frame = cv2.flip(frame, 1)
+                debug_image = copy.deepcopy(frame)
+                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(image)
+
+                gesture_text = "No hand detected"
+                accuracy = ""
+
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        mp_draw.draw_landmarks(debug_image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+                        landmark_list = calc_landmark_list(debug_image, hand_landmarks)
+
+                        if model_type == "Static Gestures":
+                            pre_processed_landmark_list = pre_process_landmark(landmark_list)
+                            hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+                            with open("model/keypoint_classifier/keypoint_classifier_label.csv", encoding='utf-8-sig') as f:
+                                keypoint_classifier_labels = [row[0] for row in csv.reader(f)]
+                            gesture_text = keypoint_classifier_labels[hand_sign_id]
+                            
+
+                        elif model_type == "Dynamic Gestures":
+                            cx, cy = landmark_list[8]  # Index fingertip
+                            point_history.append((cx, cy))
+                            if len(point_history) > 16:
+                                point_history = point_history[-16:]
+
+                                pre_processed_point_history = pre_process_point_history(point_history)
+                                history_id = point_history_classifier(pre_processed_point_history)
+                                with open("model/point_history_classifier/point_history_classifier_label.csv", encoding='utf-8-sig') as f:
+                                    point_history_labels = [row[0] for row in csv.reader(f)]
+                                gesture_text = point_history_labels[history_id]
+                                
+
+                cv2.putText(debug_image, str(gesture_text), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+                cv2.putText(debug_image, str(accuracy), (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+                frame_rgb = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
+                stframe.image(img, channels="RGB")
+
+                if stop:
+                    break
+
+            cap.release()
+            st.success("Recognition stopped.")
+
+elif selected_page == "Contact Us":
+    st.markdown("<h1 style='text-align: center;'>Contact Us</h1>", unsafe_allow_html=True)
+    name = st.text_input("Name")
+    email = st.text_input("Email")
+    message = st.text_area("Message")
+    if st.button("Send Message"):
+        if name and email and message:
+            send_email("New Contact Form Submission",
+                       f"Name: {name}\nEmail: {email}\nMessage: {message}",
+                       "youremail@example.com")
+            st.success("Message sent!")
         else:
-            point_history.append([0, 0])
+            st.error("Please fill all fields.")
 
-        debug_image = draw_point_history(debug_image, point_history)
-        debug_image = draw_info(debug_image, fps, mode, number)
+# Login/Register section (shown in sidebar only if not logged in)
+if not st.session_state.get("logged_in", False):
+    st.sidebar.title("Login/Register")
+    form_type = st.sidebar.radio("Choose", ["Login", "Register"])
 
-        # Screen reflection #############################################################
-        cv.imshow('Hand Gesture Recognition', debug_image)
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
 
-    cap.release()
-    cv.destroyAllWindows()
-
-
-def select_mode(key, mode):
-    number = -1
-    if 48 <= key <= 57:  # 0 ~ 9
-        number = key - 48
-    if key == 110:  # n
-        mode = 0
-    if key == 107:  # k
-        mode = 1
-    if key == 104:  # h
-        mode = 2
-    return number, mode
-
-
-def calc_bounding_rect(image, landmarks):
-    image_width, image_height = image.shape[1], image.shape[0]
-
-    landmark_array = np.empty((0, 2), int)
-
-    for _, landmark in enumerate(landmarks.landmark):
-        landmark_x = min(int(landmark.x * image_width), image_width - 1)
-        landmark_y = min(int(landmark.y * image_height), image_height - 1)
-
-        landmark_point = [np.array((landmark_x, landmark_y))]
-
-        landmark_array = np.append(landmark_array, landmark_point, axis=0)
-
-    x, y, w, h = cv.boundingRect(landmark_array)
-
-    return [x, y, x + w, y + h]
-
-
-def calc_landmark_list(image, landmarks):
-    image_width, image_height = image.shape[1], image.shape[0]
-
-    landmark_point = []
-
-    # Keypoint
-    for _, landmark in enumerate(landmarks.landmark):
-        landmark_x = min(int(landmark.x * image_width), image_width - 1)
-        landmark_y = min(int(landmark.y * image_height), image_height - 1)
-        # landmark_z = landmark.z
-
-        landmark_point.append([landmark_x, landmark_y])
-
-    return landmark_point
-
-
-def pre_process_landmark(landmark_list):
-    temp_landmark_list = copy.deepcopy(landmark_list)
-
-    # Convert to relative coordinates
-    base_x, base_y = 0, 0
-    for index, landmark_point in enumerate(temp_landmark_list):
-        if index == 0:
-            base_x, base_y = landmark_point[0], landmark_point[1]
-
-        temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x
-        temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y
-
-    # Convert to a one-dimensional list
-    temp_landmark_list = list(
-        itertools.chain.from_iterable(temp_landmark_list))
-
-    # Normalization
-    max_value = max(list(map(abs, temp_landmark_list)))
-
-    def normalize_(n):
-        return n / max_value
-
-    temp_landmark_list = list(map(normalize_, temp_landmark_list))
-
-    return temp_landmark_list
-
-
-def pre_process_point_history(image, point_history):
-    image_width, image_height = image.shape[1], image.shape[0]
-
-    temp_point_history = copy.deepcopy(point_history)
-
-    # Convert to relative coordinates
-    base_x, base_y = 0, 0
-    for index, point in enumerate(temp_point_history):
-        if index == 0:
-            base_x, base_y = point[0], point[1]
-
-        temp_point_history[index][0] = (temp_point_history[index][0] -
-                                        base_x) / image_width
-        temp_point_history[index][1] = (temp_point_history[index][1] -
-                                        base_y) / image_height
-
-    # Convert to a one-dimensional list
-    temp_point_history = list(
-        itertools.chain.from_iterable(temp_point_history))
-
-    return temp_point_history
-
-
-def logging_csv(number, mode, landmark_list, point_history_list):
-    if mode == 0:
-        pass
-    if mode == 1 and (0 <= number <= 9):
-        csv_path = 'model/keypoint_classifier/keypoint.csv'
-        with open(csv_path, 'a', newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([number, *landmark_list])
-    if mode == 2 and (0 <= number <= 9):
-        csv_path = 'model/point_history_classifier/point_history.csv'
-        with open(csv_path, 'a', newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([number, *point_history_list])
-    return
-
-
-def draw_landmarks(image, landmark_point):
-    if len(landmark_point) > 0:
-        # Thumb
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[3]), tuple(landmark_point[4]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[3]), tuple(landmark_point[4]),
-                (255, 255, 255), 2)
-
-        # Index finger
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[6]), tuple(landmark_point[7]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[6]), tuple(landmark_point[7]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[7]), tuple(landmark_point[8]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[7]), tuple(landmark_point[8]),
-                (255, 255, 255), 2)
-
-        # Middle finger
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[10]), tuple(landmark_point[11]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[10]), tuple(landmark_point[11]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[11]), tuple(landmark_point[12]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[11]), tuple(landmark_point[12]),
-                (255, 255, 255), 2)
-
-        # Ring finger
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[14]), tuple(landmark_point[15]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[14]), tuple(landmark_point[15]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[15]), tuple(landmark_point[16]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[15]), tuple(landmark_point[16]),
-                (255, 255, 255), 2)
-
-        # Little finger
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[18]), tuple(landmark_point[19]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[18]), tuple(landmark_point[19]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[19]), tuple(landmark_point[20]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[19]), tuple(landmark_point[20]),
-                (255, 255, 255), 2)
-
-        # Palm
-        cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[1]), tuple(landmark_point[2]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[1]), tuple(landmark_point[2]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[5]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[5]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[9]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[9]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[13]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[13]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[17]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[17]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[0]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[0]),
-                (255, 255, 255), 2)
-
-    # Key Points
-    for index, landmark in enumerate(landmark_point):
-        if index == 0:  # 手首1
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 1:  # 手首2
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 2:  # 親指：付け根
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 3:  # 親指：第1関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 4:  # 親指：指先
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 5:  # 人差指：付け根
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 6:  # 人差指：第2関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 7:  # 人差指：第1関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 8:  # 人差指：指先
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 9:  # 中指：付け根
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 10:  # 中指：第2関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 11:  # 中指：第1関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 12:  # 中指：指先
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 13:  # 薬指：付け根
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 14:  # 薬指：第2関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 15:  # 薬指：第1関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 16:  # 薬指：指先
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 17:  # 小指：付け根
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 18:  # 小指：第2関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 19:  # 小指：第1関節
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 20:  # 小指：指先
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
-                      -1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-
-    return image
-
-
-def draw_bounding_rect(use_brect, image, brect):
-    if use_brect:
-        # Outer rectangle
-        cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[3]),
-                     (0, 0, 0), 1)
-
-    return image
-
-
-def draw_info_text(image, brect, handedness, hand_sign_text,
-                   finger_gesture_text):
-    cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22),
-                 (0, 0, 0), -1)
-
-    info_text = handedness.classification[0].label[0:]
-    if hand_sign_text != "":
-        info_text = info_text + ':' + hand_sign_text
-    cv.putText(image, info_text, (brect[0] + 5, brect[1] - 4),
-               cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-
-    if finger_gesture_text != "":
-        cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
-                   cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4, cv.LINE_AA)
-        cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
-                   cv.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2,
-                   cv.LINE_AA)
-
-    return image
-
-
-def draw_point_history(image, point_history):
-    for index, point in enumerate(point_history):
-        if point[0] != 0 and point[1] != 0:
-            cv.circle(image, (point[0], point[1]), 1 + int(index / 2),
-                      (152, 251, 152), 2)
-
-    return image
-
-
-def draw_info(image, fps, mode, number):
-    cv.putText(image, "FPS:" + str(fps), (10, 30), cv.FONT_HERSHEY_SIMPLEX,
-               1.0, (0, 0, 0), 4, cv.LINE_AA)
-    cv.putText(image, "FPS:" + str(fps), (10, 30), cv.FONT_HERSHEY_SIMPLEX,
-               1.0, (255, 255, 255), 2, cv.LINE_AA)
-
-    mode_string = ['Logging Key Point', 'Logging Point History']
-    if 1 <= mode <= 2:
-        cv.putText(image, "MODE:" + mode_string[mode - 1], (10, 90),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
-                   cv.LINE_AA)
-        if 0 <= number <= 9:
-            cv.putText(image, "NUM:" + str(number), (10, 110),
-                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
-                       cv.LINE_AA)
-    return image
-
-
-if __name__ == '__main__':
-    main()
+    if form_type == "Login":
+        if st.sidebar.button("Login"):
+            # Authenticate user from DB
+            user = authenticate_user(username, password)
+            if user:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.sidebar.success("Logged in successfully!")
+            else:
+                st.sidebar.error("Invalid credentials.")
+    
+    elif form_type == "Register":
+        if st.sidebar.button("Register"):
+            # Check if user already exists
+            user = authenticate_user(username, password)  # Checking if user already exists
+            if user:
+                st.sidebar.error("Username already exists.")
+            else:
+                # Register the new user in the database
+                add_user(username, password, "")  # You can add email or other data if necessary
+                st.sidebar.success("Registered successfully. Please login.")

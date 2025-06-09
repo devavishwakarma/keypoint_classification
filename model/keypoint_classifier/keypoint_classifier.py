@@ -22,7 +22,7 @@ class KeyPointClassifier(object):
         landmark_list,
     ):
         input_details_tensor_index = self.input_details[0]['index']
-        self.interpreter.set_tensor(
+        self.interpreter.set_tensor(    
             input_details_tensor_index,
             np.array([landmark_list], dtype=np.float32))
         self.interpreter.invoke()
